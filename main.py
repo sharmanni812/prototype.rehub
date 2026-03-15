@@ -1,42 +1,37 @@
 from app import db_session
-from app.tables import User  # подключение чертежа пользователя
+from app.tables import User, Project  # Импортируем обе таблицы
 import os
 
-# 1. Подготовка: создание папки для базы, если ей нет
+# 1. Инициализация базы
 if not os.path.exists('db'):
     os.makedirs('db')
-    print("Создана папка 'db'")
 
-# 2. Инициализация базы данных
 db_session.global_init("db/projects.db")
-
-# 3. Открытие сесси (окно для работы с данными)
 session = db_session.create_session()
 
-# 4. Проверка есть ли уже что-то в базе, чтобы не было дубликатов
-test_email = "your_email@example.com"
-existing_user = session.query(User).filter(User.email == test_email).first()
+# 2. Находим тебя (создателя)
+me = session.query(User).filter(User.id == 1).first()
 
-if not existing_user:
-    # СОЗДАНИЕ ПОЛЬЗОВАТЕЛЯ
-    new_user = User()
-    new_user.name = "Твое Имя"  # Напиши тут своё имя
-    new_user.email = test_email
-    new_user.skills = "Python, SQLAlchemy, Git"
-    new_user.bio = "Разработчик платформы для поиска IT-команд"
+if me:
+    # 3. Пытаемся создать проект
+    project_name = "Rehub Platform"
+    existing_project = session.query(Project).filter(Project.title == project_name).first()
 
-    # Добавление в список на сохранение
-    session.add(new_user)
+    if not existing_project:
+        new_project = Project()
+        new_project.title = project_name
+        new_project.description = "Платформа для поиска единомышленников"
+        new_project.leader_id = me.id  # Привязываем к твоему ID
 
-    # Физическое записывание в файл .db
-    session.commit()
-    print("--- УСПЕХ: Пользователь добавлен в базу! ---")
-else:
-    print(f"--- ИНФО: Пользователь {existing_user.name} уже есть в базе ---")
+        session.add(new_project)
+        session.commit()
+        print(f"--- УСПЕХ: Проект '{project_name}' создан! ---")
+    else:
+        print(f"--- ИНФО: Проект '{project_name}' уже есть в базе ---")
 
-# 5. ВЫВОД СПИСКА ВСЕХ ИЗ БАЗЫ
-print("\nСПИСОК ПОЛЬЗОВАТЕЛЕЙ В ПРОЕКТЕ:")
-all_users = session.query(User).all()
-
-for u in all_users:
-    print(f"ID: {u.id} | Имя: {u.name} | Почта: {u.email} | Навыки: {u.skills}")
+# 4. Финальная проверка: выводим всё, что есть
+print("\nВАШИ ПРОЕКТЫ В БАЗЕ:")
+projects = session.query(Project).all()
+for p in projects:
+    # Благодаря orm.relationship мы можем достать имя лидера прямо из объекта проекта
+    print(f"ID: {p.id} | Название: {p.title} | Лидер: {me.name}")
