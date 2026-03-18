@@ -10,25 +10,66 @@ current_user = session.query(User).first()
 # --- ФУНКЦИИ-ОБРАБОТЧИКИ ---
 
 def show_projects():
-    projects = services.get_all_projects(session)
-    print("\n" + "="*20 + "\nСПИСОК ПРОЕКТОВ")
-    for p in projects:
-        print(f"[{p.id}] {p.title} ({p.category})")
+    """Подменю выбора категорий"""
+    print("\n" + "="*20)
+    print("ВЫБЕРИТЕ НАПРАВЛЕНИЕ:")
+    print("1. IT")
+    print("2. Media")
+    print("3. Fashion")
+    print("0. Назад")
     
-    did = input("\nID для подробностей (0 - назад): ")
-    if did != "0":
-        proj = session.get(Project, did)
-        if proj:
-            print(f"\n--- {proj.title} ---\nАвтор: {proj.user.name}\nОписание: {proj.description}\nРоли: {proj.needed_roles}")
+    cat_choice = input("\nВыбор темы: ")
+    
+    # Словарь для быстрого подбора категории
+    categories = {"1": "IT", "2": "Media", "3": "Fashion"}
+    selected_cat = categories.get(cat_choice)
+    
+    if selected_cat:
+        # Используем новую функцию фильтрации из services
+        projects = services.get_projects_by_category(session, selected_cat)
+        print(f"\n--- ПРОЕКТЫ В СФЕРЕ {selected_cat.upper()} ---")
+        
+        if not projects:
+            print("В этой категории пока пусто.")
         else:
-            print("Не найдено.")
+            for p in projects:
+                print(f"[{p.id}] {p.title}")
+            
+            did = input("\nID для подробностей (0 - назад): ")
+            if did != "0":
+                proj = session.get(Project, did)
+                if proj:
+                    print(f"\n--- ПОДРОБНОСТИ: {proj.title} ---")
+                    print(f"Автор: {proj.user.name}")
+                    print(f"Описание: {proj.description}")
+                    print(f"Ищут в команду: {proj.needed_roles}")
+                    print("-" * 25)
+                    input("Нажмите Enter, чтобы вернуться...")
+                else:
+                    print("Проект не найден.")
+    elif cat_choice != "0":
+        print("Неверный ввод.")
 
 def create_project():
     if not current_user: return print("Войдите в систему!")
-    t, d = input("Название: "), input("Описание: ")
-    c, r = input("Категория: "), input("Роли: ")
+    
+    print("\n--- НОВЫЙ ПРОЕКТ ---")
+    t = input("Название: ")
+    d = input("Описание: ")
+    
+    print("Доступные темы: IT, Media, Fashion")
+    c = input("Категория: ").strip()
+    
+    # Авто-коррекция регистра
+    if c.lower() == 'it': c = 'IT'
+    elif c.lower() == 'media': c = 'Media'
+    elif c.lower() == 'fashion': c = 'Fashion'
+    
+    r = input("Кто нужен (роли): ")
+    
+    # services.create_project сам проверит, входит ли 'c' в список разрешенных
     services.create_project(session, t, d, current_user.id, c, r)
-    print("Успешно создано!")
+    print(f"Проект успешно создан в разделе {c}!")
 
 def register_user():
     global current_user
@@ -49,25 +90,34 @@ def login():
 
 def apply_to_project():
     if not current_user: return print("Войдите в систему!")
-    pid = input("ID проекта: ")
+    pid = input("ID проекта для отклика: ")
     project = session.get(Project, pid)
-    if project and project.leader_id != current_user.id:
-        msg = input("Сообщение: ")
-        services.apply_to_project(session, current_user.id, pid, msg)
-        print("Отклик отправлен!")
+    
+    if project:
+        if project.leader_id == current_user.id:
+            print("Нельзя откликаться на свой проект.")
+        else:
+            msg = input("Сообщение лидеру: ")
+            services.apply_to_project(session, current_user.id, pid, msg)
+            print("Отклик отправлен!")
     else:
-        print("Ошибка: проект не найден или он ваш.")
+        print("Проект не найден.")
 
 def show_notifications():
     if not current_user: return print("Войдите в систему!")
     apps = services.get_user_notifications(session, current_user.id)
-    print("\n--- УВЕДОМЛЕНИЯ ---")
-    for a in apps:
-        print(f"Проект [{a.project.title}] -> от {a.user.name}: {a.message}")
+    print("\n--- ВХОДЯЩИЕ ЗАЯВКИ ---")
+    if not apps:
+        print("У вас пока нет уведомлений.")
+    else:
+        for a in apps:
+            print(f"Проект [{a.project.title}]")
+            print(f"От: {a.user.name} | Сообщение: {a.message}")
+            print("-" * 20)
+    input("Нажмите Enter...")
 
 # --- ГЛАВНЫЙ ЦИКЛ ---
 
-# Словарь связывает цифру с функцией
 menu_actions = {
     "1": show_projects,
     "2": create_project,
@@ -79,16 +129,21 @@ menu_actions = {
 
 while True:
     user_status = f"{current_user.name} (ID: {current_user.id})" if current_user else "НЕ АВТОРИЗОВАН"
-    print(f"\n{'='*20}\nВХОД: {user_status}\n{'='*20}")
-    print("1. Проекты | 2. Создать | 3. Рега | 4. Вход | 5. Отклик | 6. Уведомления | 7. Выход")
+    print(f"\n{'='*30}\nREHUB: {user_status}\n{'='*30}")
+    print("1. Проекты по темам")
+    print("2. Создать проект")
+    print("3. Регистрация")
+    print("4. Сменить пользователя")
+    print("5. Откликнуться")
+    print("6. Уведомления")
+    print("7. Выход")
     
-    choice = input("\nВыбор: ")
+    choice = input("\nВыбор (1-7): ")
     
     if choice == "7":
-        print("Пока!")
+        print("До встречи!")
         break
     
-    # Вызываем функцию из словаря. Если цифры нет - ничего не делаем.
     action = menu_actions.get(choice)
     if action:
         action()
