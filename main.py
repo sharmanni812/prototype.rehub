@@ -7,41 +7,53 @@ db_session.global_init("db/projects.db")
 session = db_session.create_session()
 current_user = session.query(User).first()
 
-# --- ФУНКЦИИ-ОБРАБОТЧИКИ ---
+# --- ФУНКЦИИ-ОБРАБОТЧИКИ (ИНТЕРФЕЙС) ---
 
 def check_new_alerts():
-    """Проверка новых статусов при входе в меню"""
+    """Проверка уведомлений о статусах заявок"""
     if not current_user: return
     
-    # Считаем принятые и отклоненные, чтобы не спамить списком, а просто намекнуть
-    accepted = session.query(Application).filter(Application.user_id == current_user.id, Application.status == "Принят").count()
-    rejected = session.query(Application).filter(Application.user_id == current_user.id, Application.status == "Отклонен").count()
+    accepted = session.query(Application).filter(
+        Application.user_id == current_user.id, 
+        Application.status == "Принят"
+    ).count()
+    rejected = session.query(Application).filter(
+        Application.user_id == current_user.id, 
+        Application.status == "Отклонен"
+    ).count()
     
     if accepted > 0 or rejected > 0:
-        print(f"\n🔔 У вас есть обновления по откликам ({accepted} прир. / {rejected} откл.). Загляните в пункт 6!")
+        print(f"\n🔔 УВЕДОМЛЕНИЕ: +{accepted} принятых / +{rejected} отклоненных откликов.")
+        print("Подробности в пункте 6.")
 
 def show_projects():
-    print("\n" + "="*20 + "\nВЫБЕРИТЕ НАПРАВЛЕНИЕ:\n1. IT\n2. Media\n3. Fashion\n0. Назад")
-    cat_choice = input("\nВыбор темы: ")
-    categories = {"1": "IT", "2": "Media", "3": "Fashion"}
-    selected_cat = categories.get(cat_choice)
+    print("\n" + "="*20 + "\nНАПРАВЛЕНИЯ:\n1. IT\n2. Media\n3. Fashion\n0. Назад")
+    choice = input("\nВыбор темы: ")
+    cats = {"1": "IT", "2": "Media", "3": "Fashion"}
+    selected = cats.get(choice)
     
-    if selected_cat:
-        projects = services.get_projects_by_category(session, selected_cat)
-        print(f"\n--- ПРОЕКТЫ: {selected_cat.upper()} ---")
-        if not projects: print("Пусто.")
+    if selected:
+        projects = services.get_projects_by_category(session, selected)
+        print(f"\n--- ПРОЕКТЫ: {selected.upper()} ---")
+        if not projects: print("Пока пусто.")
         else:
-            for p in projects: print(f"[{p.id}] {p.title}")
-            did = input("\nID для подробностей (0 - назад): ")
-            if did != "0":
-                proj = session.get(Project, did)
+            for p in projects:
+                status = "[НАБОР]" if p.needed_roles != "КОМАНДА СОБРАНА" else "[ЗАКРЫТ]"
+                print(f"[{p.id}] {status} {p.title}")
+            
+            pid = input("\nID проекта для деталей (0 - назад): ")
+            if pid != "0":
+                proj = session.get(Project, pid)
                 if proj:
-                    print(f"\n--- {proj.title} ---\nАвтор: {proj.user.name}\nОписание: {proj.description}\nНужны: {proj.needed_roles}\n" + "-"*25)
-                    input("Enter...")
+                    print(f"\n--- {proj.title} ---\nАвтор: {proj.user.name}\nОписание: {proj.description}")
+                    team = services.get_project_team(session, proj.id)
+                    if team:
+                        print(f"В команде: {', '.join([u.name for u in team])}")
+                    input("\nEnter...")
 
 def create_project():
     if not current_user: return print("Войдите в систему!")
-    print("\n--- НОВЫЙ ПРОЕКТ ---")
+    print("\n--- СОЗДАНИЕ ПРОЕКТА ---")
     t, d = input("Название: "), input("Описание: ")
     c = input("Категория (IT/Media/Fashion): ").strip()
     r = input("Кто нужен: ")
@@ -69,89 +81,88 @@ def apply_to_project():
     msg = input("Сообщение лидеру: ")
     if services.apply_to_project(session, current_user.id, pid, msg):
         print("Отклик отправлен!")
-    else: print("Ошибка (возможно, это ваш проект).")
+    else: print("Ошибка.")
 
 def show_my_outbox():
-    """ИСХОДЯЩИЕ: Мои заявки в чужие проекты"""
     if not current_user: return print("Войдите в систему!")
-    # Ищем все заявки, которые подал текущий юзер
     my_apps = session.query(Application).filter(Application.user_id == current_user.id).all()
-    
-    print("\n=== МОИ ОТКЛИКИ (КУДА Я ПОДАЛСЯ) ===")
-    if not my_apps:
-        print("Вы еще никуда не откликались.")
-    else:
-        for a in my_apps:
-            status_icon = "⏳" if a.status == "Ожидание" else "✅" if a.status == "Принят" else "❌"
-            print(f"{status_icon} Проект: {a.project.title}")
-            print(f"   Статус: {a.status} | Ваше сообщение: {a.message}")
-            print("-" * 20)
-    input("\nНажмите Enter...")
+    print("\n=== МОИ ОТКЛИКИ (ИСХОДЯЩИЕ) ===")
+    for a in my_apps:
+        icon = "⏳" if a.status == "Ожидание" else "✅" if a.status == "Принят" else "❌"
+        print(f"{icon} Проект: {a.project.title} | Статус: {a.status}")
+    input("\nEnter...")
 
-def manage_my_projects_inbox():
-    """ВХОДЯЩИЕ: Управление моими проектами и заявками в них"""
+def manage_my_projects_center():
     if not current_user: return print("Войдите в систему!")
-    my_projs = services.get_my_projects(session, current_user.id)
     
-    if not my_projs: return print("\nУ вас нет своих проектов.")
+    as_leader = services.get_my_projects(session, current_user.id)
+    as_member = services.get_projects_i_am_in(session, current_user.id)
+    
+    print("\n=== ВАШИ ПРОЕКТЫ ===")
+    if as_leader:
+        for p in as_leader: print(f"[{p.id}] {p.title} (ЛИДЕР)")
+    if as_member:
+        for p in as_member: print(f"[{p.id}] {p.title} (УЧАСТНИК)")
 
-    print("\n=== МОИ ПРОЕКТЫ И ЗАЯВКИ В НИХ ===")
-    for p in my_projs:
-        # Считаем сколько новых заявок на каждый проект
-        count = session.query(Application).filter(Application.project_id == p.id, Application.status == "Ожидание").count()
-        print(f"[{p.id}] {p.title} (Категория: {p.category}) — Новых заявок: {count}")
-    
-    pid = input("\nВыберите ID проекта для управления (0 - назад): ")
+    pid = input("\nID проекта (0 - назад): ")
     if pid == "0": return
-
     project = session.get(Project, pid)
-    if not project or project.leader_id != current_user.id: return print("Нет доступа.")
 
-    print(f"\nПроект: {project.title}\n1. Посмотреть заявки\n2. Удалить проект\n0. Назад")
-    act = input("Выбор: ")
-
-    if act == "1":
-        apps = services.get_project_applications(session, pid)
-        for a in apps:
-            print(f"\nID заявки: [{a.id}] | От: {a.user.name} | Статус: {a.status}\nТекст: {a.message}")
-        
-        aid = input("\nID заявки для решения (0 - назад): ")
-        if aid != "0":
-            res = input("1. Принять | 2. Отклонить: ")
-            new_status = "Принят" if res == "1" else "Отклонен"
-            services.update_application_status(session, aid, new_status)
-            print("Статус обновлен!")
-    elif act == "2":
-        if input("Удалить? (y/n): ") == "y":
+    if project and project.leader_id == current_user.id:
+        print(f"\n1. Заявки\n2. Команда\n3. Завершить набор\n4. Удалить проект")
+        act = input("Выбор: ")
+        if act == "1":
+            apps = services.get_project_applications(session, pid)
+            for a in apps: print(f"[{a.id}] {a.user.name}: {a.message}")
+            aid = input("\nID заявки (0 - назад): ")
+            if aid != "0":
+                res = input("1. Принять | 2. Отклонить: ")
+                services.update_application_status(session, aid, "Принят" if res == "1" else "Отклонен")
+        elif act == "2":
+            team = services.get_project_team(session, pid)
+            for m in team: print(f"- {m.name} ({m.email})")
+            input("\nEnter...")
+        elif act == "3":
+            services.close_project(session, pid)
+        elif act == "4":
             services.delete_project(session, pid)
-            print("Удалено.")
+    elif project:
+        print(f"\nПроект: {project.title}. Вы участник команды.")
+        input("Enter...")
+
+def delete_my_account():
+    """ФУНКЦИЯ УДАЛЕНИЯ: Находится здесь, вызывает логику из services"""
+    global current_user
+    if not current_user: return
+    
+    print("\n" + "!"*30 + "\nУДАЛЕНИЕ АККАУНТА\n" + "!"*30)
+    confirm = input(f"Для подтверждения введите ваше имя ({current_user.name}): ")
+    
+    if confirm == current_user.name:
+        if services.delete_user_completely(session, current_user.id):
+            print("Аккаунт успешно удален.")
+            current_user = None
+        else:
+            print("Ошибка при удалении.")
+    else:
+        print("Имя не совпадает. Отмена.")
 
 # --- ГЛАВНЫЙ ЦИКЛ ---
 
 menu_actions = {
-    "1": show_projects,
-    "2": create_project,
-    "3": register_user,
-    "4": login,
-    "5": apply_to_project,
-    "6": show_my_outbox,           # Исходящие
-    "7": manage_my_projects_inbox  # Входящие
+    "1": show_projects, "2": create_project, "3": register_user, 
+    "4": login, "5": apply_to_project, "6": show_my_outbox, 
+    "7": manage_my_projects_center, "9": delete_my_account
 }
 
 while True:
-    u_name = current_user.name if current_user else "Гость"
-    print(f"\n{'='*35}\nREHUB | Пользователь: {u_name}\n{'='*35}")
+    u_status = current_user.name if current_user else "Гость"
+    print(f"\n{'='*40}\n REHUB | {u_status}\n{'='*40}")
     check_new_alerts()
-    
-    print("1. Найти проект")
-    print("2. Создать проект")
-    print("3. Регистрация / 4. Вход")
-    print("5. Откликнуться")
-    print("6. Мои отклики (ИСХОДЯЩИЕ)")
-    print("7. Управление проектами (ВХОДЯЩИЕ)")
-    print("8. Выход")
+    print("1. Поиск | 2. Создать | 3. Регистрация | 4. Вход")
+    print("5. Откликнуться | 6. Мои отклики | 7. Мои проекты")
+    print("8. Выход | 9. УДАЛИТЬ АККАУНТ")
     
     choice = input("\nВыбор: ")
     if choice == "8": break
-    action = menu_actions.get(choice)
-    if action: action()
+    if action := menu_actions.get(choice): action()
