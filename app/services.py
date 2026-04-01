@@ -55,3 +55,40 @@ def get_projects_by_category(session, category):
 def get_user_notifications(session, user_id):
     """Находит уведомления для лидера проектов."""
     return session.query(Application).join(Project).filter(Project.leader_id == user_id).all()
+def get_my_projects(session, user_id):
+    """Возвращает список проектов, где текущий пользователь — лидер."""
+    return session.query(Project).filter(Project.leader_id == user_id).all()
+
+def get_project_applications(session, project_id):
+    """Возвращает все заявки на конкретный проект."""
+    return session.query(Application).filter(Application.project_id == project_id).all()
+
+def update_application_status(session, app_id, new_status):
+    """
+    Меняет статус заявки. 
+    new_status: 'Принят' или 'Отклонен'.
+    """
+    app = session.get(Application, app_id)
+    if app:
+        app.status = new_status
+        session.commit()
+        return True
+    return False
+
+def delete_project(session, project_id):
+    """Удаляет проект и все связанные с ним заявки."""
+    project = session.get(Project, project_id)
+    if project:
+        # Сначала удаляем заявки, чтобы не было ошибок связей (Foreign Keys)
+        session.query(Application).filter(Application.project_id == project_id).delete()
+        session.delete(project)
+        session.commit()
+        return True
+    return False
+
+def get_accepted_applications(session, user_id):
+    """Находит все заявки пользователя, которые были одобрены (статус 'Принят')"""
+    return session.query(Application).filter(
+        Application.user_id == user_id, 
+        Application.status == "Принят"
+    ).all()
