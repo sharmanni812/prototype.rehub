@@ -1,9 +1,9 @@
 from .tables import User, Project, Application
 
-# Константы для проекта
+# Константы проекта
 ALLOWED_CATEGORIES = ["IT", "Media", "Fashion"]
 
-# --- РАБОТА С ПОЛЬЗОВАТЕЛЯМИ ---
+# --- 1. УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ (USER LOGIC) ---
 
 def create_user(session, name, email, bio="", skills=""):
     """Регистрирует нового пользователя."""
@@ -12,65 +12,99 @@ def create_user(session, name, email, bio="", skills=""):
     session.commit()
     return user
 
-def delete_user_completely(session, user_id):
-    """
-    Полное удаление пользователя и всех его следов.
-    Удаляет отклики пользователя и его собственные проекты (вместе с чужими откликами в них).
-    """
+def authenticate_user(session, user_id):
+    """Проверяет существование пользователя (для экрана входа в EXE)."""
+    try:
+        user = session.get(User, int(user_id))
+        return user if user else None
+    except (ValueError, TypeError):
+        return None
+
+def update_user_profile(session, user_id, bio=None, skills=None):
+    """Обновляет информацию в профиле (биография, навыки)."""
     user = session.get(User, user_id)
     if user:
-        # 1. Удаляем все отклики самого пользователя в чужие проекты
+        if bio is not None: user.bio = bio
+        if skills is not None: user.skills = skills
+        session.commit()
+        return True
+    return False
+
+def get_user_stats(session, user_id):
+    """Возвращает цифры для дашборда (личного кабинета)."""
+    owned = session.query(Project).filter(Project.leader_id == user_id).count()
+    joined = session.query(Application).filter(
+        Application.user_id == user_id, 
+        Application.status == "Принят"
+    ).count()
+    pending = session.query(Application).filter(
+        Application.user_id == user_id, 
+        Application.status == "Ожидание"
+    ).count()
+    return {"owned": owned, "joined": joined, "pending": pending}
+
+def delete_user_completely(session, user_id):
+    """Каскадное удаление пользователя и всех его данных (проектов и заявок)."""
+    user = session.get(User, user_id)
+    if user:
         session.query(Application).filter(Application.user_id == user_id).delete()
-        
-        # 2. Находим проекты, где он лидер
         my_projects = session.query(Project).filter(Project.leader_id == user_id).all()
         for p in my_projects:
-            # Удаляем все отклики других людей в эти проекты
             session.query(Application).filter(Application.project_id == p.id).delete()
             session.delete(p)
-        
-        # 3. Удаляем самого пользователя
         session.delete(user)
         session.commit()
         return True
     return False
 
 
-# --- РАБОТА С ПРОЕКТАМИ ---
+# --- 2. ЛОГИКА ПРОЕКТОВ (PROJECT LOGIC) ---
 
 def create_project(session, title, description, leader_id, category="IT", roles=""):
     """Создает новый проект с валидацией категории."""
     if category not in ALLOWED_CATEGORIES:
         category = "IT"
-
     project = Project(
-        title=title, 
-        description=description, 
-        leader_id=leader_id,
-        category=category,
-        needed_roles=roles
+        title=title, description=description, leader_id=leader_id,
+        category=category, needed_roles=roles
     )
     session.add(project)
     session.commit()
     return project
 
+def search_projects(session, query):
+    """Поиск по ключевому слову (в названии или описании)."""
+    search = f"%{query}%"
+    return session.query(Project).filter(
+        (Project.title.ilike(search)) | (Project.description.ilike(search))
+    ).all()
+
 def get_projects_by_category(session, category):
-    """Фильтрует проекты по конкретной теме."""
+    """Фильтрация проектов по теме."""
     return session.query(Project).filter(Project.category == category).all()
 
 def get_my_projects(session, user_id):
-    """Возвращает список проектов, где пользователь — лидер."""
+    """Список проектов, где пользователь является лидером."""
     return session.query(Project).filter(Project.leader_id == user_id).all()
 
 def get_projects_i_am_in(session, user_id):
-    """Находит проекты, в которые пользователя ПРИНЯЛИ как участника."""
+    """Проекты, в которые пользователя приняли как участника."""
     return session.query(Project).join(Application).filter(
         Application.user_id == user_id,
         Application.status == "Принят"
     ).all()
 
+def close_project(session, project_id):
+    """Завершает набор в проект."""
+    project = session.get(Project, project_id)
+    if project:
+        project.needed_roles = "КОМАНДА СОБРАНА"
+        session.commit()
+        return True
+    return False
+
 def delete_project(session, project_id):
-    """Удаляет проект и все связанные с ним заявки."""
+    """Полное удаление проекта."""
     project = session.get(Project, project_id)
     if project:
         session.query(Application).filter(Application.project_id == project_id).delete()
@@ -79,40 +113,21 @@ def delete_project(session, project_id):
         return True
     return False
 
-def close_project(session, project_id):
-    """Помечает проект как укомплектованный."""
-    project = session.get(Project, project_id)
-    if project:
-        project.needed_roles = "КОМАНДА СОБРАНА"
-        session.commit()
-        return True
-    return False
 
-
-# --- РАБОТА С ЗАЯВКАМИ (ОТКЛИКАМИ) ---
+# --- 3. ЛОГИКА ВЗАИМОДЕЙСТВИЯ (APPLICATION LOGIC) ---
 
 def apply_to_project(session, user_id, project_id, message="Хочу в команду!"):
-    """Создает отклик на проект."""
+    """Создает отклик (заявку) на участие."""
     project = session.get(Project, project_id)
-    # Нельзя откликнуться, если проекта нет или набор закрыт
-    if not project or project.needed_roles == "КОМАНДА СОБРАНА":
+    if not project or project.needed_roles == "КОМАНДА СОБРАНА" or project.leader_id == user_id:
         return None
-    
-    # Нельзя откликнуться на свой же проект
-    if project.leader_id == user_id:
-        return None
-        
     app = Application(user_id=user_id, project_id=project_id, message=message)
     session.add(app)
     session.commit()
     return app
 
-def get_project_applications(session, project_id):
-    """Возвращает все заявки на конкретный проект для лидера."""
-    return session.query(Application).filter(Application.project_id == project_id).all()
-
 def update_application_status(session, app_id, new_status):
-    """Меняет статус заявки ('Принят'/'Отклонен')."""
+    """Меняет статус заявки (Принят/Отклонен)."""
     app = session.get(Application, app_id)
     if app:
         app.status = new_status
@@ -120,8 +135,12 @@ def update_application_status(session, app_id, new_status):
         return True
     return False
 
+def get_project_applications(session, project_id):
+    """Список всех заявок на проект для лидера."""
+    return session.query(Application).filter(Application.project_id == project_id).all()
+
 def get_project_team(session, project_id):
-    """Возвращает список участников (User), которые были ПРИНЯТЫ в проект."""
+    """Список принятых участников проекта."""
     return session.query(User).join(Application).filter(
         Application.project_id == project_id,
         Application.status == "Принят"
